@@ -1,0 +1,2126 @@
+---
+title: "Assignment3"
+author: "Faizan Khalid Mohsin"
+output: 
+  pdf_document:
+    toc: true
+    toc_depth: 2
+    number_sections: true
+bibliography: bibliography.bib
+---
+
+\newpage
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, fig.height=4)
+
+
+#Load all packages
+library(missForest)
+require(kableExtra)
+require(tableone)
+require(ggplot2)
+require(UsingR)
+require(glmnet)
+require(knitr)
+require(dplyr)
+require(epiR)
+require(class)
+library(rpart)
+library(tree)
+library(pROC)
+library(mice)
+library(ISLR)
+library(gplots)
+library(xtable)
+library(cluster)
+library(corrplot)
+#install.packages("tableone", "kableExtra",  "UsingR", "glmnet", "epiR", "tree", "pROC")
+
+```
+
+
+# Question 1
+
+# Introduction
+
+In the world of Precision Medication, Genetics research and Big data in general, methods for clustering over large number of variables, sometimes over 10,000 features in genetics data, has become very important. With data becoming ever bigger, and being collected without any specific use in mind at the time of collection, unsupervised clustering methods can be very useful when trying to analyze the data for future purposes. Also, in many cases the outcome variable of interest is not know, or collected, hence again, unsupervised clustering methods can be very useful. 
+
+There have been several unsupervised clustering methods developed over the past years, however, we will be mainly using the traditional k-means clustering and hierarchical clustering methods. In this study we will be exploring genetic data of mice with over 77 variables using these two methods. 
+
+# Methods
+
+## Data Set
+
+We will be using some data of expression levels of proteins/protein modifications that produced detectable signals in the nuclear fraction of cortex. In the original data there are 77 proteins/protein modifications. There are 38 control mice and 34 trisomic mice (Down syndrome), for a total of 72 mice. In the experiments, 15 measurements were registered of each protein per sample/mouse. Therefore, for control mice, there are 38x15, or 570 measurements, and for trisomic mice, there are 34x15, or 510 measurements. The dataset contains a total of 1080 measurements per protein.
+
+ 
+For our purposes, we will treat each measurement as an independent sample/mouse. 
+
+The eight classes of mice are described based on characteristics such as genotype, behavior and treatment. According to genotype, mice can be control or trisomic.
+
+Feature information in columns
+
+* 1 Mouse ID 
+* 2-78 Values of expression levels of 77 proteins (their names are given as names of the columns)
+* 79 Genotype: control (c) or trisomy (t) 
+* 80 Treatment type: memantine (m) or saline (s) 
+* 81 Behavior: context-shock (CS) or shock-context (SC) 
+* 82 Class: c-CS-s, c-CS-m, c-SC-s, c-SC-m, t-CS-s, t-CS-m, t-SC-s, t-SC-m 
+
+Features 79 to 82 are all categorical variables and we will be collectively referring to them as the "characteristics" the their factors as "characteristics levels".
+
+## Missing Data
+
+```{r, include=FALSE}
+
+# To handle the missing data we will use multiple imputation by chain equations with predictive mean matching. Instead of the usual method of creating *m* imputed data sets and then performing *m* analysis, we will only use the first imputed data set for the purposes of simplicity. A better, but still unusual method would have been to create *m* imputed data sets and then combine the *m* data sets by taking the average for numerical variables and the mode for categorical variables. 
+# 
+# The reason we use multiple imputation over other methods such as KNN imputation is that KNN is not able to handle categorical variables very well as it calculates the nearest neighbours using a distance metric, such as the euclidean metric. It can somewhat handle categorical variables by crearting dummy variables for the factors with 0's and 1's and using those for the distance. But clearly this would not be the prefered way if a better method is available.  
+
+```
+
+Now, for dealing with missing data, multiple imputation by chain equations with predictive mean matching is a very good and reasonable method for handling missing data. The fact that it is a semi-parametric method and provides some degree of robustness against the violations of the imputation model assumptions such as normality, homoscedasticity of residuals, and linearity [@morris2014tuning], are advantageous. However, random forest imputation (RFImp) is a completely non-parametric method and can handle nonlinearities [@shah2014comparison]. 
+
+Therefore, we will be using random forest imputation (RFI) for the missing data. RFImp will be implemented using the "missForest" package in R. Further, for the RFImp the mouse ID variable was removed since it had 1080 factors and is not informative because we are treating each data entry (row) as independent. Moreover, mouse ID has 1080 factors and missForest cannot handle variables with more than 53 factors. 
+
+## Data exploration
+
+We perform some data exploration to get an idea of how our data looks like. We present the correlation matrix of the numerical variables as a heat map, with dark red representing a strong negative correlation, blue a strong positive correlation and white a correlation of zero. We also present pairwise scatter plots of some of the numerical variables that exhibit an interesting pattern. Finally, we present a heatmap of the data which allows one to visualize the entire dataset at a glance. The heatmap also shows the feature clustering as well as the observation clustering via a dendrogram. 
+
+## Silhouette: Comparing Clustering Methods (K-Means, Hierarchical and PAM) and Number of Clusters.
+
+We use the silhouette method to determine which of the three methods perform better clustering and what the optimal number of clusters is. We describe the silhouette method below.
+
+Once clustering is performed, the silhouette method produces a silhouette width for every point. The values of the silhouette width range from +1 to -1, where values close to +1 indicate that the point has been clustered correctly. Values close to -1 indicate that it has been clustered incorrectly. Average silhouette width can be used for selecting the optimal number of clusters as well as comparing between clustering methods. 
+
+The closer the average silhouette width is to +1 for a clustering method, for the indicated number of clusters, the better the performance. 
+
+We calculated the average silhouette width for k-means, hierarchical and PAM clustering methods, for the number of clusters from 2 to 5.
+
+We used the highest the average silhouette width value for determining the best clustering method and the optimal number of clusters. 
+
+## Reduced Dimension PCA Plots
+
+Visualizing a data set with over 77 variables is a challenging task. 
+
+Now once we performed the clustering, to visually see if the clusters are associated with any of the different genotype, behaviour and/or treatment, we need to do a dimension reduction. Ideally, the dimension reduction would preserve some structure of the data and reduce the dimension to two. This would allow us to easily plot and see the association between the clusters and the categorical variables, when we include those in the reduced dimension plots. 
+
+Hence, to do this, after the clustering is done, we perform PCA on the scaled data and then using the first two principal components to plot a graph with the data points. One these data points we also indicate the different levels the points belong for a categorical variable through different colours. Further, the points are plotted using different shapes (triangles, circles, etc.) denoting which clusters the they belong to. To create these visualizations we create a helper function which is mainly built on the clusplot() function in R. This helper function is defined in Appendix B.2.
+
+This is a good method firstly, because it is a visual method, instead of presenting tables (concordance tables, which we also do for completeness), we can immediately see the any general patterns and which levels of a categorical variable are associated with which clusters.
+
+Lastly, we call these reduced PCA (rdPCA) plots. 
+
+## K-Means Clustering
+
+We performed k mean clustering to find distinct clusters in the data. We first scale the data because we do not want the variable scales to effect the clustering. For example, we do not want the fact that we might have the height in meters versus centimeters to affect the the clustering. Therefore, we scale the data before performing k-means clustering. Further, we only include numerical variables in the k-means clustering because its methodology depends on calculating the distance of the data points. A concept which is ill defined for categorical variables using the traditional distance metrics. 
+
+We do exploratory k-means clustering for k from 2 to 5, using primarily visual techniques. We also present some concordance tables to see if any clusters are associated with any of the different characteristics (categorical variables). For k = 2, we do formal analysis of the clusters and also describe the two clusters using means of the proteins, and counts of the levels (see Table 2 in the K-means clustering Results section). 
+
+For performing k-means clustering, the nstrat value (the number of random starts the k-means clustering will do) we chose the value of 40 because its total.see plot was stable for all the k-means clustering we preformed.
+
+Computationally, when we tried to create 8 clusters using k-means clustering, we found that, even nstart values of up to 500 did not produce stable plots for tot.sse. Further, we when tried running this for nstart 600, throughout the run, the message "did not converge in 10 iterations" was continuously being produced and took a very long time to run in R and ultimately crashed. Hence, running k-means clustering for higher values of k was computationally intensive and challenging. 
+
+Therefore, we limited performing k-means clustering to small values of k, and in particular did not perform k-means clustering for k = 8 because we did not find an appropriate nstart value for the tot.sse plot to be stable. Even though the Class variable had 8 levels. 
+
+## Hierarchical Clustering
+
+
+For the hierarchical clustering we first choose only the numerical variables and then scale the data, similarly as in k-means clustering due to the same reasons. Lastly, we create the distance matrix as the hierarchical clustering model only needs the distances and not the actual data for clustering. 
+
+We perform hierarchical clustering using the three linkages: complete, average and single, and use the linkage which creates the most balanced clusters. We find this to be complete linkage as it appears to do the most balanced clustering and it also looks the most reasonable. 
+
+Computationally, running hierarchical clustering was much easier compared to k-means clustering. Once, the hierarchical clustering model finished running (which was very quick), it was very easy to cluster the data, even for very high values of k, unlike for the k-means clustering. 
+
+Lastly, even if the average silhouette width for hierarchical clustering is less than that of PAM. We still use this method for doing exploratory clustering because of the great potential and easy of understanding and implementing this method. Further, all the main conclusions will be drawn from k-means clustering since it had  the highest average silhouette width. 
+
+## Comparing Means between two Clusters for Different Proteins. 
+
+Once we have clustered the data into two groups using k-means clustering, we will test which proteins have a statistically significant difference in mean for two clusters. We will be using the t-test with non-equal variance assumption. Since there are 77 proteins in the data set we will conduct 77 t-tests. Due to multiple hypothesis testing, we will do a bonferroni correction to adjust the significance level when determining which proteins have a statistically significant difference in mean for the two clusters. We will be using a bonferroni corrected significance value of $\alpha = 0.05/77$ . 
+
+
+# Results
+
+## Results Summary
+
+### Data Exploration
+
+From the correlation plot (Figure 1.) we see that a lot of the variables are strongly and positively correlated with one another. This could be because we have multiple measurements coming from the same mice making the data points correlated. 
+
+### Silhouette: Comparing Clustering Methods and the Optimal Number of Clusters
+
+We found that for both, k-means clustering and hierarchical clustering, the optimal number of clusters was k = 2. 
+
+Further, we found that for k = 2, k-means clustering was a better clustering method compared to hierarchical clustering as it had a higher average silhouette width. The average silhouette width for k-means, PAM and hierarchical clustering were 0.144, 0.139, and 0.121, respectively. Relatively speaking, these values are low, and ideally we would like to have the average silhouette width of our clustering method to be closer to 1.
+
+Now, even though PAM cluster better than hierarchical, the second method we will use for clustering, after k-means clustering, will be hierarchical clustering. We do this because hierarchical is a very different clustering method to both K-means and PAM. Further, it is very easy to implement and cluster for large values of k, and what it is doing for clustering, is captured in dendrograms, and can be understood easily. 
+
+### K-Mean Clustering
+
+Using the rdPCA plots we found the levels of "Behavior", C/S and S/C, to be associated with with the different clusters we created (see Figures 6, 7 and 8). 
+
+We found 58 proteins to have a statistically significant difference in mean between the two clusters after the boferroni correction. The list of these proteins are (see Table 1 to see their p-values in the K-Means Clustering section in Results). 
+
+Since, k = 2 is the optimal number of clusters we also described the two clusters using mean protein levels and counts for the categorical variables in Table 2 in the K-Means Clustering section in Results. 
+
+Looking at Table 2 we found that the class t-SC-m is mainly found in cluster 2 (113 out of 135 (83%) t-SC-m's were in cluster 2). Further, from the same table we can see that more S/C Behavior points are found in cluster 2 (366 out of 555 (70%) S/C's were in cluster 2).  
+
+For k = 3, we found some interesting clustering for the proteins DYRK1A_N and BDNF_N. In Figure 14 cluster 2 is on the lower right bottom of the graph. Cluster 1 is on the upper left side of the graph. The two clusters make a wedge and the two flank cluster 3, which is found in between the two. It can also be seen that almost all S/C points are below the value 0.5 for the DYRK1A_N protein (x-axis). 
+
+### Hierarchical Clustering 
+
+From looking at the plots of the hierarchical clustering of the complete, average and single linkages, complete linkage produced the most balanced clusters and appeared the most reasonable. Hence, for performing hierarchical clustering, we used complete linkage.
+
+For k = 2, it can be seen in the rdPCA plots, that the clustering is different compared to what we had for k-means clustering. For instance, looking at Figure 19 one can see that hierarchical clustering produces one is very large cluster and another much smaller cluster. Whereas, k-means had two clusters that were relatively of similar sizes. 
+
+We further went and calculated how many points were clustered similarly. From Table 3 it can be seen that about 24.1% (260 out of 1080 points) were clustered differently from k-means clustering. Hence, approximately 76% of the data points were clustered the same way by both clustering methods. See Table 3 on page 28, and Figure 6 and Figure 19 on pages 14 and 27, respectively (note that in the figures, k-clustering cluster 1 corresponds to cluster 2 of the hierarchical clustering - the labels were switched).
+
+For k = 3, we notice that cluster three has very few points for all four characteristics. This pattern is present as we increase k. Most of the points are in few of the clusters and the remaining clusters have very points in general. 
+
+For k = 8, in the concordance table we do not see any distinct clusters representing any of the 8 levels of the class characteristic distinctly. 
+
+### Characteristics
+
+We found that for the proteins ITSN1_N and BDNF_N the means for two levels of the behavior characteristic C/S and S/C were statistically significantly different (see Figures 12 and 13).
+
+### Principal Component Analysis: Proteins that exhibit a distinct expression pattern (profile)
+
+We see that the first 9 pc's explain 80.6% of the total variance.  
+
+Further, there is a distinct pattern in the biplot. All the proteins are pointing left of the y-axis.
+
+any particular set of proteins that exhibit a distinct expression pattern (profile) in any or all of these clusters
+
+In terms of any particular set of proteins that exhibit a distinct expression pattern (profile), we can see from Figure 24, almost all the proteins can be grouped into two clusters: either they are positively correlated to the second principal component or negatively correlated to the second principal. 
+
+
+\newpage
+
+## Data exploration
+
+```{r Data Cleaning}
+
+set.seed(2)
+
+# The detailed data cleaning is in the appendix
+data5 = read.csv("rf_imputed_data.csv")
+
+# Create a data set with categorical variables.
+categorical_data = data5[, 79:82]
+
+
+# Creating labels for the categories to be used later.
+labels_genotype = data5$Genotype
+labels_treatment = data5$Treatment
+labels_behavior = data5$Behavior
+labels_class = data5$class
+
+# Creating the data set with the numerical variables. 
+datta = data5[, -c(1, 79:82)] # Remove the categorical variables. 
+data_unscaled = datta
+data_scaled = scale(datta) # Scaling the data.
+
+
+# From the below summary we can see that all the categories are well balanced.
+summary(categorical_data)
+```
+
+From the summary we can see that all the categories are well balanced. This is expected given the information provided in section 3.1. of the methods section.  
+
+
+Below we graph the correlation plot to get a sense of how correlated our data is.
+
+```{r, fig.width=15, fig.height=16}
+set.seed(2)
+data =  data_unscaled
+data = data_scaled
+kdata.scale = data_scaled
+
+M = cor(data)
+corrplot(M, method="color", main = "Correlation Plot of the Numerical Variables")
+```
+
+\begin{center}
+Figure 1.
+\end{center}
+
+
+From this graph we see that most of our variables are positively correlated with one another and that several of them are very strongly correlated. This most likely is because the data points are correlated as one mouse has several measurements taken from him. 
+
+\newpage
+
+
+Below we will produce the pairwise scatter plots of some of the proteins that appeared to have an interesting pattern.  
+
+
+```{r}
+par(mfrow=c(3,1))
+
+#pairs(data[, c(1,2,10,33)])
+pairs(data[, c(1,10,62,71)])
+pairs(data[, c(2,33,44)])
+
+# Variables that appear to be interesting:
+interesting_var = c(1,2,10,33,44,62,71)
+#`r names(data_unscaled[,interesting_var])`
+```
+
+In these scatter plots variables appeared to have interesting patterns such as some having wedge like shapes, some being strongly linear and for some having two distinct separate groups of clusters.
+
+\newpage
+
+## Heatmap
+
+We first look at the heatmap of our data before doing any clustering to get a general idea of our data. We create a heatmap using our numeric data below. 
+
+```{r,  fig.height= 15, fig.width=15}
+y = t(as.matrix(data_unscaled))
+
+heatmap.2(y,trace="none")
+```
+
+\begin{center}
+Figure 2.
+\end{center}
+
+From the heatmap above, by looking at the dendrogram on the left hand side that clusters the features, we see that our data has about two to three main clusters it naturally can be grouped into. 
+
+
+\newpage
+
+## Silhouette: Comparing Clustering Methods and Number of Clusters
+
+
+We first calculate the average silhouette width values for kmeans clustering for k from 2 to 5. The average silhouette width is plotted against the number of clusters in the graph below. 
+
+
+```{r, fig.height= 4, fig.width=7}
+
+# let's investigate the number of clusters for kmeans
+sil_width1 <- c()
+
+for(i in 1:4){
+  km_out = kmeans(kdata.scale,i+1,nstart=40)
+  si <- silhouette(km_out$cluster,dist(kdata.scale))
+  ssi <- summary(si)
+  
+  # with pam fit, sil info is provided as part of the output
+  # for other clustering methods we would have to extract it with the
+  # silhouette function
+  sil_width1[i] <- ssi$avg.width
+}
+
+# Plot sihouette width (higher is better)
+plot(2:5, sil_width1,
+     main = "Silhouette Width vs. Number of Clusters for K-Means Clustering",
+     xlab = "Number of clusters",
+     ylab = "Average Silhouette Width") 
+lines(2:5, sil_width1)
+
+```
+
+\begin{center}
+Figure 3.
+\end{center}
+
+From the plot above we can see that the k-mean clustering average silhouette width is highest for k = 2 clusters (0.1437) and it drops as k increases. Hence, this indicates that the optical number of clusters for k-mean clustering is 2.
+
+\newpage
+
+We now plot the hierarchical clustering average silhouette width against the number of clusters in the graph below with k going from 2 to 5. For hierarchical clustering we use complete linkage. 
+
+```{r,  fig.height= 4, fig.width=7}
+
+# let's investigate the number of clusters for Hierarchical Clustering
+sil_width2 <- c()
+
+hc.complete <- hclust(dist(kdata.scale), method="complete")
+
+for(i in 1:4){
+  cut.tree.complete <- cutree(hc.complete,k=i+1)
+  si <- silhouette(cut.tree.complete,dist(kdata.scale))
+  ssi <- summary(si)
+  
+  # with pam fit, sil info is provided as part of the output
+  # for other clustering methods we would have to extract it with the
+  # silhouette function
+  sil_width2[i] <- ssi$avg.width
+}
+
+# Plot sihouette width (higher is better)
+plot(2:5, sil_width2,
+     main = "Silhouette Width vs. Number of Clusters for Hierarchical Clustering",
+     xlab = "Number of clusters",
+     ylab = "Average Silhouette Width") 
+lines(2:5, sil_width2)
+
+```
+
+\begin{center}
+Figure 4.
+\end{center}
+
+
+From the above plot, we see that we have similar results as for k-means clustering. We can see that the hierarchical clustering average silhouette width is highest for k = 2 clusters (0.1206) and drops sequentially as k increases. Hence, the optical number of clusters for hierarchical clustering is 2.
+
+
+We now plot the Partitioning Around Medoids clustering average silhouette width against the number of clusters in the graph below with k going from 2 to 5. For hierarchical clustering we use complete linkage. 
+
+
+```{r,  fig.height= 4, fig.width=7}
+
+# let's investigate the number of clusters for PAM
+
+y = kdata.scale # We use our scaled data. 
+
+sil_width3 <- c()
+for(i in 1:4){
+  pam_fit <- pam(y, k=i+1)
+  # with pam fit, sil info is provided as part of the output
+  # for other clustering methods we would have to extract it with the
+  # silhouette function
+  sil_width3[i] <- pam_fit$silinfo$avg.width
+}
+
+# Plot sihouette width (higher is better)
+
+plot(2:5, sil_width3,
+     main = "Silhouette Width vs. Number of Clusters for PAM",
+     xlab = "Number of clusters",
+     ylab = "Silhouette Width")
+lines(2:5, sil_width3)
+
+
+```
+
+\begin{center}
+Figure 5.
+\end{center}
+
+
+Again, partitioning around medoids average silhouette width is highest for k = 2 clusters (0.1392) and drops as k increases.
+
+**Final Conclusion**
+
+Finally, we observe that for k = 2, k-means clustering has the higher average silhouette width (0.1437) compared to that of hierarchical clustering (0.1206) and PAM (0.1392). Hence, it appears k-means clustering is the best performing clustering method and PAM is the second best. Now, relatively speaking, the average silhouette width for all our clustering methods is low ( $\approx$ 0.14). We would like values as close to 1 as possible. 
+
+## K-Means Clustering
+
+```{r, echo=FALSE}
+
+
+#################### Helper functions
+
+
+##################### Function 1
+# We create a function that will take in as arguments:
+# the kmeans clustering output, the variable column positions
+# and the categorical variable to be used for plotting
+# the clusters and the factors of the categorical variables
+# on the scatter plot of the two indicated variables.
+
+plot_kmeans_variables = function( km.out, x, y, labels_type){
+  
+  # Plot the points with clusters and labels
+  plot(data_unscaled[, c(x,y)],col=km.out$cluster, 
+       pch = sort(as.numeric(unique(labels_type)))[labels_type], 
+       main = "Plotting Proteins with Clusters and Characteristic Levels")
+
+  
+  # Plot the legend
+  unique_clusters = sort(unique(km.out$cluster))
+  cluster_names = paste("Cluster", as.character(unique_clusters))
+  label_names = as.character(unique(labels_type))
+  
+  legend("topleft",  
+         legend = cluster_names, 
+         text.col = unique_clusters, 
+         bty = "n") 
+  
+    legend("bottomright",  
+         legend = label_names, 
+         text.col = "black", 
+         pch = as.numeric(unique(labels_type)),
+         bty = "n")
+  
+}
+
+
+###################### Function 2
+# Creating a function that will plot the k-clustering 
+# with the PCA and labels. 
+# The function will take in arguments:
+# the kmeans clustering output, and 
+# the categorical variable (labels_type),
+# to be used for plotting the clusters as different labels/shapes
+# such as triagles, circles, etc. 
+# The categorical variables levels will be the different colours
+# These will be plotted on the first two pc's.
+
+plot_PCA_kmeans = function( km.out, labels_type) {
+  
+  # Extract all the info from the km clustering output
+  clusters <- km.out$cluster
+  unique_clusters = sort(unique(clusters))
+  
+  # Perform PCA
+  nba2d <- prcomp(kdata.scale, center=TRUE)
+  twoColumns <- nba2d$x[,1:2]
+  
+  # Plot PCA with the labels_type i.e. behaviour, etc.
+  clusplot(twoColumns, unique_clusters[clusters], col.p = c("deeppink", "blue")[labels_type], 
+           col.clus = "black" )
+  
+  # Create variables for the legend.
+  cluster_names = paste("Cluster", as.character(unique_clusters))
+  label_names = as.character(unique(labels_type))
+  black = rep("black", length(unique_clusters))
+
+  
+  # Plot the legend
+  legend("topright",  
+         legend = c(cluster_names, label_names), 
+         col = c(black, "deeppink", "blue"), 
+         pch = c( unique_clusters, 15, 15), 
+         bty = "n", 
+         text.col = "black") 
+  
+}
+
+
+# We create the same functions as above, however, 
+# we slightly generalize them a bit more to be more
+# flexible.
+
+
+##################### Function 1
+
+plot_kmeans_variables1 = function( cluster_output, x, y, labels_type){
+  
+  # Plot the points with clusters and labels
+  plot(data_unscaled[, c(x,y)],col=cluster_output,
+       pch = sort(as.numeric(unique(labels_type)))[labels_type], 
+       main = "Plotting Proteins with Clusters and Characteristic Levels")
+  
+  # Plot the legend
+  unique_clusters = sort(unique(cluster_output))
+  cluster_names = paste("Cluster",
+                        as.character(unique_clusters))
+  label_names = as.character(unique(labels_type)) 
+  
+  
+  legend("bottomright",  
+         legend = label_names, 
+         text.col = "black", 
+         pch = as.numeric(unique(labels_type)),
+         bty = "n")  
+  
+    legend("topleft",  
+         legend = cluster_names, 
+         text.col = unique_clusters, 
+         bty = "n")
+  
+}
+
+
+###################### Function 2
+
+plot_PCA_kmeans1 = function( cluster_output, labels_type) {
+  
+  # Extract all the info from the km clustering output
+  clusters <- cluster_output
+  unique_clusters = sort(unique(clusters))
+  
+  # Perform PCA
+  nba2d <- prcomp(kdata.scale, center=TRUE)
+  twoColumns <- nba2d$x[,1:2]
+  
+  # Plot PCA with the labels_type i.e. behaviour, etc.
+  clusplot(twoColumns, unique_clusters[clusters], col.p = c("deeppink", "blue")[labels_type], 
+           col.clus = "black"  )
+  
+  # Create variables for the legend.
+  cluster_names = paste("Cluster", as.character(unique_clusters))
+  label_names = as.character(unique(labels_type))
+  black = rep("black", length(unique_clusters))
+  
+  # Plot the legend
+  legend("topright",  
+         legend = c(cluster_names, label_names), 
+         col = c(black, "deeppink", "blue"), 
+         pch = c( unique_clusters, 15, 15), 
+         bty = "n", 
+         text.col = "black") 
+}
+
+
+```
+
+**Summary of what we will do for k-means clustering**
+
+As we have already determined that the optimal number of clusters is 2 we will perform a few analysis on the two clusters we create using k-means clustering (i.e. comparing means of the two clusters for different proteins). However, first we will do exploratory k-means clustering for different values of k from k = 2 to k = 8, and will plot the clusters using the PCA dimension reduction technique (explained in the methods section) plotted with different characteristics to see if any of the clusters represent or are associated with any of the classes or the levels of the characteristics. 
+
+For creating these reduced dimensions PCA (rdPCA) plots we create a helper functions called "plot_PCA_kmeans" that can be found in Appendix B.2 along with other helper functions created for plotting graphs.
+
+Further, we graphed plots of the tot.sse for all the k values from 2 to 5 with nstart = 40, for the k-means clustering. All the plots were stable and can be found in Appendix A.1. The plots for k greater that 5 are unstable as they are not straight lines. . 
+
+**Exploratory k-means clustering**
+
+We did k-means clustering for values of k from 2 to 5 and plotted the clusters using the rdPCA plots with different characteristics. We found the levels of the characteristic "Behavior" to have interesting overlays with the different clusters we created. 
+
+We also plotted the other characteristics using the rdPCA plots, however, we did not find any interesting clustering patterns or associations between the clusters and the different characteristic levels. These plots can be found in the Appendix A.2 section. 
+
+We present the behaviour rdPCA plots below.
+
+```{r}
+
+km2.mouse.out = kmeans(kdata.scale,2,nstart=40)
+plot_PCA_kmeans(km2.mouse.out, labels_behavior)
+```
+
+\begin{center}
+Figure 6.
+\end{center}
+
+This has interesting pattern. For the characteristic: behavior levels, the data seems to be well divided into upper and lower halves at zero, with all the S/C being above zero and majority of C/S being below zero.
+
+
+```{r}
+km3.mouse.out = kmeans(kdata.scale,3,nstart=40)
+plot_PCA_kmeans(km3.mouse.out, labels_behavior)
+
+```
+
+\begin{center}
+Figure 7.
+\end{center}
+
+From this plot it appears that cluster 1 (the circles), captures a lot of the S/C points. And that cluster 2 and 3 capture a lot of the C/S points. Further, all the points of cluster 1 (the circles) belong to S/C. 
+
+
+```{r}
+
+km4.mouse.out = kmeans(kdata.scale,4,nstart=40)
+plot_PCA_kmeans(km4.mouse.out, labels_behavior)
+
+```
+
+\begin{center}
+Figure 8.
+\end{center}
+
+We see an interesting clustering structure here. It appears that majority of the points in cluster 4 are C/S points (since there are few pink crosses), and the majority of points in cluster 2 are S/C points. Whereas, for clusters 1 and 3, they both have a well mixed number of C/S and S/C points. So clusters 2 and 4 appear to be homogeneous clusters with S/C and C/S, respectively and clusters 1 and 3 appear to be balanced heterogeneous clusters with both S/C and C/S points well represented in them. 
+
+For the other characteristics, they were equally distributed over the clusters for k equal to 2 and 5 and we could not really see any specific pattern or any of the clusters representing any levels of the other characteristics. We show a sample plot below. The other plots were very similar to this one. They can all be found in the section Appendix A.2. 
+
+
+```{r}
+
+plot_PCA_kmeans(km2.mouse.out, labels_treatment)
+
+```
+
+\begin{center}
+Figure 9.
+\end{center}
+
+
+As you can see, two levels, Memantine and Saline, are equally mixed in the two clusters. The two clusters do not appear to represent any of the two levels. 
+
+
+We will take a closer look at k = 2 clusters and k = 3 cluster. 
+
+For now we look more deeply into do k = 2 clusters first. 
+
+
+
+Now we will plot the two clusters and the classes against different variables.
+
+```{r}
+
+plot_kmeans_variables(km2.mouse.out, 1, 3, labels_treatment)
+
+```
+
+\begin{center}
+Figure 10.
+\end{center}
+
+
+From this graph we see that data points with values higher than 0.31 for protein BDNF_N are in cluster 2. We will further investigate this with plotting boxplot of the protein value for the 2 clusters and will also do a test to test if the difference in mean of the two clusters is statistically significant. 
+
+```{r}
+data_clus = data.frame(data_unscaled, cluster = km2.mouse.out$cluster)
+boxplot(BDNF_N ~ cluster,data_clus, 
+        main = "Boxplot of BDNF_N Protein for the two Clusters", 
+        xlab = "Cluster",
+        ylab = "BDNR_N")
+
+```
+
+\begin{center}
+Figure 11.
+\end{center}
+
+
+From the boxplot it appears that the means of the two clusters are different and that cluster 2 has on general higher values. 
+
+We will now do the t test. 
+
+```{r}
+t.test(BDNF_N ~ cluster,data_clus)
+```
+From this test it is clear that the two clusters have different mean BDNF_N protein values as p-value <<< 0.001. The the difference in mean is 0.0626 units. 
+
+
+We will now do a t-test for all the 77 proteins comparing their means in the two clusters. 
+
+```{r}
+
+numeric_var_names = colnames(data_unscaled)
+test_data = lapply(data_clus[,numeric_var_names], function(x) t.test(x ~ data_clus$cluster))
+pvalues_data = data.frame(p.value = sapply(test_data, getElement, name = "p.value"))
+estimate_data = t(data.frame(sapply(test_data, getElement, name ="estimate")))
+diff_in_mean = estimate_data[,2] - estimate_data[,1]
+
+final_data = data.frame("Difference in mean of the two clusters" = diff_in_mean, pvalues_data)
+
+protein_w_sig_pvalues = subset(final_data  , p.value < 0.05/77 )
+
+sig_proteins = rownames(protein_w_sig_pvalues)
+
+
+```
+
+After conducting 77 t-tests we found the following 58 proteins to be statistically significant.
+
+Here below is the table with the mean difference and the p-values. 
+
+```{r}
+kable(protein_w_sig_pvalues, caption = "Proteins with Statisitically Significant
+      mean difference between the two clusters."  )
+```
+
+All of these proteins were found to have statistically significant different means for the two clusters after the bonferroni correction. The table also provides the mean difference between the two clusters for the each protein. Note that NR2A_N has the greatest mean difference of 1.0964168 among all the proteins. The protein pCFOS_N has the smallest difference in mean of -0.0064697 and may not be clinically significant.
+
+\newpage
+
+We will now describe the two clusters in the table below for all the variables of the data. 
+
+```{r}
+
+# Helper Function based on CreateTableOne() function to create tables in 
+# Rmarkdown/Rsweave using kable. 
+KreateTableOne = function(x, ..., printSMD = TRUE){
+  t1 = tableone::CreateTableOne(data=x, ...)
+  t2 = print(t1, quote=TRUE, ...)
+  rownames(t2) = gsub(pattern='\\"', replacement='', rownames(t2))
+  colnames(t2) = gsub(pattern='\\"', replacement='', colnames(t2))
+  return(t2)
+}
+
+```
+
+
+```{r, include=FALSE}
+
+table1_data = data.frame(data5[,-1], cluster = km2.mouse.out$cluster)
+vars_names = c(names(categorical_data), names(data_unscaled))
+fvar = names(categorical_data)
+table1 = KreateTableOne(x = table1_data, vars = vars_names, strata= "cluster" )
+
+#table1 = print(table1, showAllLevels)
+
+```
+
+
+```{r }
+
+kable(table1, caption = "Describing the two clusters.")
+
+```
+
+As you can imagine, this table can be very interesting to a researcher. We can see several interesting things from this. The class t-SC-m is mainly found in cluster 2 (113 out of 135 (83%) t-SC-m's were in cluster 2). Further, from the same table we can see that more S/C Behavior points are found in cluster 2 (366 out of 555 (70%) S/C's were in cluster 2).
+
+We looked at several more plots and the found the following two very interesting. 
+
+```{r}
+
+plot_kmeans_variables(km2.mouse.out, 1, 3, labels_behavior)
+```
+
+\begin{center}
+Figure 12.
+\end{center}
+
+
+```{r}
+plot_kmeans_variables(km2.mouse.out, 2, 44, labels_behavior)
+
+```
+
+\begin{center}
+Figure 13.
+\end{center}
+
+
+From the two graphs above we notice that the behaviour level C/S has higher values for the ITSN1_N and BDNF_N proteins.
+
+We investigate this a bit further and perform a t-test to verify our finding.
+
+```{r}
+t.test(ITSN1_N ~ Behavior, data5)
+```
+
+We find the difference in mean between the two groups to be highly statistically significant.
+
+We now do a t-test for the protein BDNF_N and compare the mean difference between the behavior groups of C/S and S/C. 
+
+```{r}
+t.test(BDNF_N ~ Behavior, data5)
+```
+
+Again, we find if to be statistically significant, but not as strongly as ITSN1_N
+
+
+```{r, include=FALSE, eval=FALSE}
+plot_kmeans_variables(km2.mouse.out, 1, 72, labels_genotype)
+plot_kmeans_variables(km2.mouse.out, 10, 44, labels_treatment)
+plot_kmeans_variables(km2.mouse.out, 10, 62, labels_class)
+plot_kmeans_variables(km2.mouse.out, 10, 72, labels_behavior)
+plot_kmeans_variables(km2.mouse.out, 33, 62, labels_genotype)
+```
+
+\newpage
+
+**Now we do k-means clustering for 3 clusters.**
+
+We looked at many k = 3 clustering plots but only found the above two plots with proteins BDNF_N and DYRK1A_N and proteins pELK_N and P3525_N to have an interesting clustering pattern. 
+
+```{r}
+plot_kmeans_variables(km3.mouse.out, 1, 3, labels_behavior)
+
+```
+
+\begin{center}
+Figure 14.
+\end{center}
+
+
+In the above plot we can see that the clusters have an interesting pattern. Cluster 2 is on the lower right bottom of the values. Cluster 1 is on the upper left side of the values. The two clusters make a wedge and in between the two clusters, cluster 3 is found. It can also be seen that almost all S/C points are below the value 0.5 for the DYRK1A_N protein (x-axis). 
+
+```{r}
+t.test(DYRK1A_N ~ Behavior, data5)
+```
+
+We now plot the clustering with the proteins pELK_N and P3525_N.
+
+```{r}
+
+plot_kmeans_variables(km3.mouse.out, 10, 72, labels_behavior)
+
+```
+
+\begin{center}
+Figure 15.
+\end{center}
+
+
+From the above graph it can be seen that the clustering structure for these proteins is similar to in the previous graphs except that cluster 2 and cluster 3 create the wedge and cluster 1 is found in between them. 
+
+
+```{r, include=FALSE, eval=FALSE}
+plot_kmeans_variables(km3.mouse.out, 1, 2, labels_treatment)
+plot_kmeans_variables(km3.mouse.out, 1, 3, labels_treatment)
+plot_kmeans_variables(km3.mouse.out, 10, 33, labels_class)
+plot_kmeans_variables(km3.mouse.out, 2, 44, labels_behavior)
+plot_kmeans_variables(km3.mouse.out, 44, 62, labels_genotype)
+
+plot_kmeans_variables(km3.mouse.out, 1, 10, labels_treatment)
+plot_kmeans_variables(km3.mouse.out, 1, 44, labels_class)
+plot_kmeans_variables(km3.mouse.out, 1, 62, labels_behavior)
+plot_kmeans_variables(km3.mouse.out, 1, 72, labels_genotype)
+
+plot_kmeans_variables(km3.mouse.out, 10, 44, labels_treatment)
+plot_kmeans_variables(km3.mouse.out, 10, 62, labels_class)
+plot_kmeans_variables(km3.mouse.out, 33, 62, labels_genotype)
+```
+
+
+We present the concordance tables of the k = 3 k-means clustering. 
+
+```{r}
+
+## The concordance matrix for k = 3. 
+# Make a cross-tabulation table that shows the concordance.
+table(km3.mouse.out$cluster,labels_genotype); table(km3.mouse.out$cluster,labels_behavior); table(km3.mouse.out$cluster,labels_treatment); table(km3.mouse.out$cluster,labels_class)
+
+```
+
+From the above we see that fro Behavior cluster 1 has mostly C/S data points (278 out of 359). 
+
+\newpage
+
+
+## Hierarchical clustering
+
+We will now perform hierarchical clustering.
+
+First, we will do clustering using the three linkages: complete, single, and average, and plot the clustering. 
+   
+
+```{r , fig.height=6,  fig.width=17}
+
+
+####################################################
+####################################################
+##### Hierarchical clustering ############
+
+## Do not need the distances not the data, to run the whole thing. 
+
+## Creates a distance matrix. 
+hc.complete <- hclust(dist(kdata.scale), method="complete")
+hc.average <- hclust(dist(kdata.scale), method="average")
+hc.single <- hclust(dist(kdata.scale), method="single")
+
+par(mfrow=c(1,3))
+
+plot(hc.complete,main="Complete Linkage", xlab="", sub="",
+       cex =.9) ## WHat is cex?
+plot(hc.average , main =" Average Linkage ", xlab="", sub ="",
+       cex =.9)
+plot(hc.single , main=" Single Linkage ", xlab="", sub ="",
+       cex =.9)
+```
+
+\begin{center}
+Figure 16.
+\end{center}
+
+
+From the above plot it is appears that the complete linkage creates the most balanced clustering and looks the most reasonable.
+
+Further, for k = 2, we will plot the resulting clusters for the proteins BRAF_N and ERBB4_N below. 
+
+```{r Fig1, fig.height=5,  fig.width=15}
+par(mfrow=c(1,3))
+
+cut.tree.com <- cutree(hc.complete,k=2)
+cut.tree.av <- cutree(hc.average,k=2)
+cut.tree.sin <- cutree(hc.single,k=2)
+
+plot(data_scaled[, c(21, 55)],
+     col=cut.tree.com,main="complete")
+
+plot(data_scaled[, c(21, 55)],
+     col=cut.tree.av,main="average")
+
+plot(data_scaled[, c(21, 55)],
+     col=cut.tree.sin,main="single")
+
+```
+
+\begin{center}
+Figure 17.
+\end{center}
+
+
+Again, from the above graph complete linkage creates does most balanced clustering and looks the most reasonable. We can see from the above graph that the average and single linkages group majority of the points into one cluster. Hence, we will use complete linkage for hierarchical clustering.
+
+Also, it is quite plain from the complete linkage plot that, at the high level, there are two main groups. This is consistent with what we found in our heatmap of the data as well as when we calculated the hierarchical clustering Silhouette plot.
+
+Further, and then the second group has another distinct two groups. Hence, one would say that the data can be clustered also into three main groups, with the second cluster being divided into two further subgroups.
+
+From the complete linkage plot it can be seen that if we like the data can in fact be grouped into five groups with Cluster 1 having two main subgroup, Cluster 2 also having two main subgroups, and Cluster 3 not having any real subgroup would just be the fifth group. Hence, we would have Cluster 1a, Cluster 1b, Cluster 2a, Cluster 2b, and Cluster 3 as our five clusters if we wanted to have 5 clusters instead of three. 
+
+Now, we will do a similar visualization of the clustering using the PCA dimension reduction trick. 
+
+```{r}
+
+# How about k=2 ?
+
+cut.tree.com <- cutree(hc.complete,k=2)
+cut.tree.av <- cutree(hc.average,k=2)
+cut.tree.sin <- cutree(hc.single,k=2)
+
+plot_kmeans_variables1(cut.tree.com, 23, 24, labels_behavior)
+```
+
+\begin{center}
+Figure 18.
+\end{center}
+
+```{r}
+plot_PCA_kmeans1(cut.tree.com, labels_behavior)
+
+```
+
+\begin{center}
+Figure 19.
+\end{center}
+
+
+
+We notice from the above graph, for k = 2, that the clustering is different compared to what we had for k-means clustering. The two clusters for k-means were of similar sizes. Here we can clearly see that hierarchical clustering produces clusters, where one is very large and the other is much smaller. Although the shapes appear very similar to that of k-means clustering. 
+
+We also notice that the coding is inverse to that of k-means (cluster 1, the circles were on the right had side). 
+
+We present the concordance table below, after correcting for this inversion.
+
+```{r}
+
+cut.tree.com = cut.tree.com - 1
+cut.tree.com[ which(cut.tree.com == 0)] = 2
+
+table(cut.tree.com, labels_behavior )
+table(cut.tree.com, labels_treatment)
+table( cut.tree.com, labels_genotype)
+table( cut.tree.com, labels_class)
+```
+
+
+We compare the results of the k=2 hierarchical clustering with the k-means clustering. 
+
+```{r}
+km2.clusters =km2.mouse.out$cluster
+cut.tree.compl <- cut.tree.com
+tree.complete.clusters = cut.tree.compl
+
+d = table(tree.complete.clusters, km2.clusters)
+
+kable(xtable(d), row.names = TRUE,
+      col.names = c("Kmeans Cluster 1", "Kmeans Cluster 2"), 
+      caption = "Comparing clustering of hierarchical clustering (rows) with k-means clustering for k = 2.")
+
+
+```
+
+We see that approximately 24% of points were clustered differently.
+
+
+```{r, eval=FALSE, include=FALSE}
+
+plot_PCA_kmeans1(cut.tree.com, labels_treatment)
+plot_PCA_kmeans1(cut.tree.com, labels_genotype)
+
+plot_kmeans_variables1(cut.tree.com, 23, 24, labels_treatment)
+plot_kmeans_variables1(cut.tree.com, 23, 24, labels_genotype)
+plot_kmeans_variables1(cut.tree.com, 23, 24, labels_class)
+
+plot_kmeans_variables1(cut.tree.com, 1, 77, labels_treatment)
+plot_kmeans_variables1(cut.tree.com, 1, 77, labels_genotype)
+plot_kmeans_variables1(cut.tree.com, 1, 77, labels_class)
+```
+
+
+We now do some clustering for k = 3. 
+
+```{r}
+
+# How about k=3?
+
+cut.tree.com <- cutree(hc.complete,k=3)
+
+par(mfrow=c(1,3))
+
+
+plot(data_scaled[, c(4, 5)],
+     col=cut.tree.com,main="complete")
+
+plot(data_scaled[, c(1, 77)],
+     col=cut.tree.com,main="complete")
+
+plot(data_scaled[, c(31, 32)],
+     col=cut.tree.com,main="complete")
+```
+
+\begin{center}
+Figure 20.
+\end{center}
+
+```{r}
+par(mfrow=c(1,1))
+
+plot_PCA_kmeans1(cut.tree.com, labels_behavior)
+```
+
+\begin{center}
+Figure 21.
+\end{center}
+
+```{r}
+
+table(cut.tree.com, labels_behavior )
+table(cut.tree.com, labels_treatment)
+table( cut.tree.com, labels_genotype)
+table( cut.tree.com, labels_class)
+
+```
+
+
+We notice that cluster three has very few points for all four characteristics. 
+
+One interesting thing we noticed on how the clusters produced from hierarchical clusters is better when making mutually exclusive clustering, at least for k = 3, for our data. From the concordance table of the class, there is less of an overlap. 
+
+```{r,eval=FALSE, include=FALSE}
+plot_PCA_kmeans1(cut.tree.com, labels_treatment)
+
+plot_PCA_kmeans1(cut.tree.com, labels_genotype)
+```
+
+
+
+```{r, eval=FALSE, include=FALSE}
+
+# How about k=5?
+
+cut.tree.com <- cutree(hc.complete,k=5)
+
+
+plot_PCA_kmeans1(cut.tree.com, labels_treatment)
+plot_PCA_kmeans1(cut.tree.com, labels_behavior)
+plot_PCA_kmeans1(cut.tree.com, labels_genotype)
+
+table(cut.tree.com, labels_behavior )
+table(cut.tree.com, labels_treatment)
+table( cut.tree.com, labels_genotype)
+table( cut.tree.com, labels_class)
+
+
+#average and complete seem good, single does not 
+
+# Which method works best? Can you discover any legitimate subgroups? 
+
+
+## THis is an exploratory method and the output of these can be used as inputs 
+## to other methods. 
+## We use this clustering with visualization methods. 
+
+
+# After you find the optimal clustering, investigate if 
+# there is any difference in the distribution of the outcomes 
+# across the clusters. E.g. using boxplots and/or 
+# appropriate statistical tests
+
+
+```
+
+
+We now do k = 8 and see the concordance table for the class characteristic, and see if we get 8 individual clusters. 
+
+```{r}
+cut.tree.com <- cutree(hc.complete,k=8)
+table( cut.tree.com, labels_class)
+```
+
+For k = 8, we do not see any distinct clusters representing any of the 8 levels of the class distinctly. 
+
+Lastly, we try k = 12 to see if we get any clusters that represent the 8 levels of the class distinctly. 
+
+```{r}
+cut.tree.com <- cutree(hc.complete,k=12)
+table( cut.tree.com, labels_class)
+```
+
+Again, we do not. Mostly, all the points are in cluster 1 to 6 and the other clusters have very few points in them. 
+
+## Principal Component Analysis: Proteins that exhibit a distinct expression pattern (profile)
+
+Do we see any particular set of proteins that exhibit a distinct expression pattern (profile) in any or all of these clusters? (You may want to consider PCA, loadings and biplots for that question)
+
+```{r}
+
+pr.out <- prcomp(data_unscaled, scale=TRUE) #We have scaled the data
+pr.var <- pr.out$sdev^2
+pve <- pr.var/sum(pr.var)
+
+plot(pve, xlab="Principal Component", ylab="Proportion of 
+     Variance Explained ", type="b")
+
+# there is a drop after about 9 pc's
+```
+
+\begin{center}
+Figure 22.
+\end{center}
+
+There is a drop after about 5 pc's.
+
+```{r}
+
+plot(cumsum(pve), xlab="Principal Component", ylab="
+     Cumulative Proportion of Variance Explained ",
+     ylim=c(0,1), type="b")
+# not a drastic change in terms of cummulative variance explained
+
+# summary contains most of this info
+
+```
+
+\begin{center}
+Figure 23.
+\end{center}
+
+
+```{r}
+vars <- apply(pr.out$x, 2, var)  
+props <- vars / sum(vars)
+cumsum(props)[1:9]
+```
+
+
+We see that the first 9 pc's explain 80.6% of the total variance. 
+
+
+```{r, fig.width=10, fig.height=10}
+biplot(pr.out, scale=0 )
+
+```
+
+\begin{center}
+Figure 24.
+\end{center}
+
+There is a distinct pattern in the biplot. All the proteins are pointing left of the y-axis. 
+
+We identify which variables have the largest effect on each principal component. Loadings close to -1 or 1 indicate that the variable strongly influences the component. Interestingly, we see in the plot that none of the variables are positively correlated with the first principal component. Further, almost all the variables can be grouped, as either being positively or negatively correlated to the second principal component, or being negatively correlated to the first pc. 
+
+Hence, almost all the proteins can be grouped into two clusters: either they are positively correlated to the second principal component or negatively correlated to the second principal. 
+
+
+# Discussion
+
+Using any of the methods and techniques you learned under unsupervised learning (clustering, PCA, dissimilarity metrics, heatmap plots, biplots etc.) investigate any patterns in the data in order to answer questions like the following:
+
+Q: Are there any distinct clusters in the measurements?
+
+Yes, there are several which we discuss in the results section. 
+
+Q: Are these clusters associated with any of the different genotype, behaviour and/or treatment? E.g. you may find that some of these clusters are more representatives of some of the classes described above.
+
+Yes, this is discussed in the Results Summary and Results sections. 
+
+Q: Do we see any particular set of proteins that exhibit a distinct expression pattern (profile) in any or all of these clusters? (You may want to consider PCA, loadings and biplots for that question)
+
+Discussed, above. 
+
+Q: Bonus question:In the data we consider the samples as independent. The reality is that most likely they are not since multiple measurements are coming from the same mouse. Are there any implications about this? Discuss possible ways if any that you could improve the overall analysis plan by taking into consideration this potential cor-relatedness in the data.
+
+Clearly, the samples are not independent as multiple measurements are coming from the same mouse. This is most likely the reason so many variables were correlated strongly, and mostly positively, to one another in the data (see Figure 1). The implications of this will be that some relationships will appear to be strong between variables when this in fact is simply due to the fact that multiple measurements are coming from the same mouse. If a mouse has a high value for a protein, then the other proteins may also have high values simply because they are coming form the same sample. 
+
+One way to take into account the fact that the data points are not independent, is to first create two columns; the first indicating the unique code of the mouse and the second indicating the measurement number indicator which would run from 1 to 15. Just by simply having these two columns themselves in the random forest imputation method would improve the imputed values for the missing data. 
+
+Secondly, we would segment the data into the number of mice and run the analysis on each mice data and then see the over all pattern of the results and draw our conclusions from that. 
+
+A third way, would be to create dummy variables in the data set that would serve as indicator variables for each mouse. So, since there are a total of 72 mice, we would create 71 dummy variables. These variables could then be used in the subsequent analysis, and would in a way account for having points that are correlated to one another since they are coming from the same mouse. 
+
+Finally, some form of repeated measures model should be used when conducting the analysis. 
+
+
+
+# Question 2
+
+Think of ways that you could use some of the unsupervised learning methods in problems you are or have recently faced in your research or work. Explain how and why they can be helpful in investigating the problems and answering the questions you are dealing with.
+
+In one of my research work I had to find out what were the characteristics of the successful and sustainable charities in Canada using the tax return data that was provided by CRA of all 23,000 Canadian charities. 
+
+There was a very large number of variables, so the first thing we did was dimension reduction by performing PCA. Using the first three PCA's we then used those as input for k-mean clustering, where we used different values of k. We found that the best clustering was for when k was 3 and there were three main groups of charities, each had varying degree of sustainability/success. We measured sustainability/success of each group, each cluster, by measuring which cluster had the least number of charities that went bankrupt. 
+
+Now, we found that the three types of charities that the k-mean clustering were as follows:
+1) The charities whose income source was primarily based on donations.
+2) The charities whose income source was primarily based on self created income, such as investment or providing some service. 
+3) The charities whose income source was primarily based on funding from the government. 
+
+The charities with government funding were the most sustainable, followed by charities based on self created income and the least sustainable were donation based ones. This, makes very much sense especially, since what we also found that charities based on income and donations could had a very high chance of going bankrupt if a recession came. The charities who were government funded were sort of "immune" to a recession. 
+
+Unsupervised learning methods were very important here. It was very important to reduce the number of features, as there were over 100 variables in the dataset and it was very difficult to run. 
+
+Further, the research question was to find sustainable/successful charities, however, neither success nor sustainability were defined in the question. Only, after we had done the PCA and the k-mean clustering that it occurred to us that the number of charities that went bankrupt were significantly different in each of the 3 clusters.
+
+Lastly, without the clustering and feature reduction techniques of unsupervised clustering, it would not have really been possible to answer this research question. 
+
+
+# References
+
+<div id="refs"></div>
+
+# Appendix
+
+## Appendix A.1. Plots of tot.sse for different values of k in kmeans clustering.
+
+
+Now to choose the value of nstart for the kmeans clustering we will plot the graph of the tot.sse for kmeans clustering for k from 2 to 8. With nstart equal to 40.  
+
+```{r Aditional rdPCA plots, echo=TRUE}
+
+tot.sse <- matrix(NA, nrow = 100, ncol = 4 )
+for(k in 2:5){
+
+  j = k - 1
+  for (i in 1:100){
+    km.out <- kmeans(kdata.scale,k,nstart=40) ##If this is not a straight line increase nstart.
+    tot.sse[i, j] <- km.out$tot.withinss
+  }
+
+  colnames(tot.sse) = paste0("k", (2:(ncol(tot.sse)+1)))
+}
+
+for ( i in 1:4){
+  plot(tot.sse[,i],type="l", main = paste("Plot of the tot.see for nstart of 40 and", i+1 , "Clusters"))
+# Clearly the plot of tot.sse is stable
+}
+
+# # Individually plotted.
+# 
+# tot.sse = c()
+# k=5
+# nstart8 = 40
+# # jpeg(paste0('tot_sse_Plot_k', k, '_nstart', nstart8, '.jpg'))
+# for (i in 1:100){
+#     km.out <- kmeans(kdata.scale,k,nstart=nstart8) ##If this is not a straight line increase nstart.
+#     tot.sse[i] <- km.out$tot.withinss
+# }
+# 
+# plot(tot.sse,type="l", main = paste("Plot of the tot.see for nstart of", nstart8, "and", k , "Clusters"))
+# # dev.off() 
+# rm(i)
+
+
+```
+
+## Appendix A.2. Additional rdPCA Plots and some Clustering Plots
+
+```{r, echo=TRUE}
+par(mfrow=c(1,1))
+
+
+plot_PCA_kmeans(km2.mouse.out, labels_treatment)
+plot_PCA_kmeans(km2.mouse.out, labels_genotype)
+
+plot_PCA_kmeans(km3.mouse.out, labels_treatment)
+plot_PCA_kmeans(km3.mouse.out, labels_genotype)
+
+
+plot_PCA_kmeans(km4.mouse.out, labels_treatment)
+plot_PCA_kmeans(km4.mouse.out, labels_genotype)
+
+km5.mouse.out = kmeans(kdata.scale,5,nstart=40)
+plot_PCA_kmeans(km5.mouse.out, labels_treatment)
+plot_PCA_kmeans(km5.mouse.out, labels_behavior)
+plot_PCA_kmeans(km5.mouse.out, labels_genotype)
+
+plot_kmeans_variables(km3.mouse.out, 1, 2, labels_treatment)
+plot_kmeans_variables(km3.mouse.out, 1, 3, labels_treatment)
+plot_kmeans_variables(km3.mouse.out, 10, 33, labels_class)
+plot_kmeans_variables(km3.mouse.out, 2, 44, labels_behavior)
+plot_kmeans_variables(km3.mouse.out, 44, 62, labels_genotype)
+
+plot_kmeans_variables(km3.mouse.out, 1, 10, labels_treatment)
+plot_kmeans_variables(km3.mouse.out, 1, 44, labels_class)
+plot_kmeans_variables(km3.mouse.out, 1, 62, labels_behavior)
+plot_kmeans_variables(km3.mouse.out, 1, 72, labels_genotype)
+
+plot_kmeans_variables(km3.mouse.out, 10, 44, labels_treatment)
+plot_kmeans_variables(km3.mouse.out, 10, 62, labels_class)
+plot_kmeans_variables(km3.mouse.out, 33, 62, labels_genotype)
+
+
+```
+
+## Appendix B.1. Data Cleaning Code
+
+
+```{r}
+knitr::opts_chunk$set(echo = TRUE, eval =  FALSE) 
+```
+
+
+```{r}
+
+# Read in the data
+
+data0 = read.csv("Data_Cortex_Nuclear.csv")
+dim(data0)
+
+# str(data0)
+# unique(data0$num)
+# Naming the variables.
+
+varnames = names(data0)
+varnames
+
+# colnames(data0) = var_names
+#
+# var_names = c("age", "sex", "cp", "trestbps", "chol", "fbs","restecg",
+#               "thalach", "exang", "oldpeak", "slope", "ca", "thal", "num")
+#
+# num_var =  c("age","trestbps", "chol",
+#               "thalach", "oldpeak", "ca")
+#
+# factor_var = c( "sex", "cp", "fbs","restecg",
+#                "exang", "slope", "ca", "thal", "num")
+#
+# colnames(data0) = var_names
+
+
+# Performing checks on the data
+
+#summary(data0)
+
+
+# Look at the summary data
+
+# Looking at how many missing data there are indicated by "?".
+data1 = data0
+
+#which( data1 == "?", arr.ind = T)
+
+
+# Looking at the missing data.
+str(data0)
+summary(data0)
+
+md.pattern(data0)
+
+
+# We will impute the missing data using multiple imputation
+
+
+# We will impute the missing data using
+
+# We will remove the variable MouseID before imputation.
+data1 = select(data0,-MouseID)
+
+dim(data0)
+dim(data1)
+set.seed(111)
+
+#data2 = missForest(data1)
+
+names(data2)
+
+class(data2$ximp)
+
+data2$OOBerror
+
+data3 = data2$ximp
+
+MouseID = data0$MouseID
+data4 = cbind(MouseID, data3)
+md.pattern(data4)
+write.csv(data4, file = "rf_imputed_data.csv", row.names = F )
+
+```
+
+## Appendix B.2. Helper Functions to create 2-D PCA visualization of data with Clustering.
+
+```{r}
+
+
+#################### Helper functions
+
+
+##################### Function 1
+# We create a function that will take in as arguments:
+# the kmeans clustering output, the variable column positions
+# and the categorical variable to be used for plotting
+# the clusters and the factors of the categorical variables
+# on the scatter plot of the two indicated variables.
+
+plot_kmeans_variables = function( km.out, x, y, labels_type){
+  
+  # Plot the points with clusters and labels
+  plot(data_unscaled[, c(x,y)],col=km.out$cluster, 
+       pch = sort(as.numeric(unique(labels_type)))[labels_type], 
+       main = "Plotting Proteins with Clusters and Characteristic Levels")
+
+  
+  # Plot the legend
+  unique_clusters = sort(unique(km.out$cluster))
+  cluster_names = paste("Cluster", as.character(unique_clusters))
+  label_names = as.character(unique(labels_type))
+  
+  legend("topleft",  
+         legend = cluster_names, 
+         text.col = unique_clusters, 
+         bty = "n") 
+  
+    legend("bottomright",  
+         legend = label_names, 
+         text.col = "black", 
+         pch = as.numeric(unique(labels_type)),
+         bty = "n")
+  
+}
+
+
+###################### Function 2
+# Creating a function that will plot the k-clustering 
+# with the PCA and labels. 
+# The function will take in arguments:
+# the kmeans clustering output, and 
+# the categorical variable (labels_type),
+# to be used for plotting the clusters as different labels/shapes
+# such as triagles, circles, etc. 
+# The categorical variables levels will be the different colours
+# These will be plotted on the first two pc's.
+
+plot_PCA_kmeans = function( km.out, labels_type) {
+  
+  # Extract all the info from the km clustering output
+  clusters <- km.out$cluster
+  unique_clusters = sort(unique(clusters))
+  
+  # Perform PCA
+  nba2d <- prcomp(kdata.scale, center=TRUE)
+  twoColumns <- nba2d$x[,1:2]
+  
+  # Plot PCA with the labels_type i.e. behaviour, etc.
+  clusplot(twoColumns, unique_clusters[clusters], col.p = c("deeppink", "blue")[labels_type], col.clus = "black" )
+  
+  # Create variables for the legend.
+  cluster_names = paste("Cluster", as.character(unique_clusters))
+  label_names = as.character(unique(labels_type))
+  black = rep("black", length(unique_clusters))
+
+  
+  # Plot the legend
+  legend("topright",  
+         legend = c(cluster_names, label_names), 
+         col = c(black, "deeppink", "blue"), 
+         pch = c( unique_clusters, 15, 15), 
+         bty = "n", 
+         text.col = "black") 
+  
+}
+
+
+# We create the same functions as above, however, 
+# we slightly generalize them a bit more to be more
+# flexible.
+
+
+##################### Function 1
+
+plot_kmeans_variables1 = function( cluster_output, x, y, labels_type){
+  
+  # Plot the points with clusters and labels
+  plot(data_unscaled[, c(x,y)],col=cluster_output,
+       pch = sort(as.numeric(unique(labels_type)))[labels_type], 
+       main = "Plotting Proteins with Clusters and Characteristic Levels")
+  
+  # Plot the legend
+  unique_clusters = sort(unique(cluster_output))
+  cluster_names = paste("Cluster",
+                        as.character(unique_clusters))
+  label_names = as.character(unique(labels_type)) 
+  
+  
+  legend("bottomright",  
+         legend = label_names, 
+         text.col = "black", 
+         pch = as.numeric(unique(labels_type)),
+         bty = "n")  
+  
+    legend("topleft",  
+         legend = cluster_names, 
+         text.col = unique_clusters, 
+         bty = "n")
+  
+}
+
+
+###################### Function 2
+
+plot_PCA_kmeans1 = function( cluster_output, labels_type) {
+  
+  # Extract all the info from the km clustering output
+  clusters <- cluster_output
+  unique_clusters = sort(unique(clusters))
+  
+  # Perform PCA
+  nba2d <- prcomp(kdata.scale, center=TRUE)
+  twoColumns <- nba2d$x[,1:2]
+  
+  # Plot PCA with the labels_type i.e. behaviour, etc.
+  clusplot(twoColumns, unique_clusters[clusters], col.p = c("deeppink", "blue")[labels_type], 
+           col.clus = "black"  )
+  
+  # Create variables for the legend.
+  cluster_names = paste("Cluster", as.character(unique_clusters))
+  label_names = as.character(unique(labels_type))
+  black = rep("black", length(unique_clusters))
+  
+  # Plot the legend
+  legend("topright",  
+         legend = c(cluster_names, label_names), 
+         col = c(black, "deeppink", "blue"), 
+         pch = c( unique_clusters, 15, 15), 
+         bty = "n", 
+         text.col = "black") 
+}
+
+
+```
+
+## Appendix B.3. Code for remaining analysis in the same order as the analysis was performed.
+
+This presents the rest of the code in the same order that was used to do the analysis with an effort to keep the same headings for readability. 
+
+Data exploration
+
+```{r Data Cleaning2, echo = TRUE, eval =  FALSE}
+
+set.seed(2)
+
+# The detailed data cleaning is in the appendix
+data5 = read.csv("rf_imputed_data.csv")
+
+# Create a data set with categorical variables.
+categorical_data = data5[, 79:82]
+
+
+# Creating labels for the categories to be used later.
+labels_genotype = data5$Genotype
+labels_treatment = data5$Treatment
+labels_behavior = data5$Behavior
+labels_class = data5$class
+
+# Creating the data set with the numerical variables. 
+datta = data5[, -c(1, 79:82)] # Remove the categorical variables. 
+data_unscaled = datta
+data_scaled = scale(datta) # Scaling the data.
+
+
+# From the below summary we can see that all the categories are well balanced.
+summary(categorical_data)
+```
+
+
+Below we graph the correlation plot to get a sense of how correlated our data is.
+
+```{r, fig.width=15, fig.height=16}
+set.seed(2)
+data =  data_unscaled
+data = data_scaled
+kdata.scale = data_scaled
+
+M = cor(data)
+corrplot(M, method="color", main = "Correlation Plot of the Numerical Variables")
+```
+
+
+
+Below we will produce the pairwise scatter plots of some of the proteins that appeared to have an interesting pattern.  
+
+
+```{r}
+par(mfrow=c(3,1))
+
+#pairs(data[, c(1,2,10,33)])
+pairs(data[, c(1,10,62,71)])
+pairs(data[, c(2,33,44)])
+
+# Variables that appear to be interesting:
+interesting_var = c(1,2,10,33,44,62,71)
+#`r names(data_unscaled[,interesting_var])`
+```
+
+
+
+Heatmap
+
+
+```{r,  fig.height= 15, fig.width=15}
+y = t(as.matrix(data_unscaled))
+
+heatmap.2(y,trace="none")
+```
+
+
+Silhouette: Comparing Clustering Methods and Number of Clusters
+
+
+
+```{r, fig.height= 4, fig.width=7}
+
+# let's investigate the number of clusters for kmeans
+sil_width1 <- c()
+
+for(i in 1:4){
+  km_out = kmeans(kdata.scale,i+1,nstart=40)
+  si <- silhouette(km_out$cluster,dist(kdata.scale))
+  ssi <- summary(si)
+  
+  # with pam fit, sil info is provided as part of the output
+  # for other clustering methods we would have to extract it with the
+  # silhouette function
+  sil_width1[i] <- ssi$avg.width
+}
+
+# Plot sihouette width (higher is better)
+plot(2:5, sil_width1,
+     main = "Silhouette Width vs. Number of Clusters for K-Means Clustering",
+     xlab = "Number of clusters",
+     ylab = "Average Silhouette Width") 
+lines(2:5, sil_width1)
+
+```
+
+
+
+We now plot the hierarchical clustering average silhouette width against the number of clusters in the graph below with k going from 2 to 5. For hierarchical clustering we use complete linkage. 
+
+```{r,  fig.height= 4, fig.width=7}
+
+# let's investigate the number of clusters for Hierarchical Clustering
+sil_width2 <- c()
+
+hc.complete <- hclust(dist(kdata.scale), method="complete")
+
+for(i in 1:4){
+  cut.tree.complete <- cutree(hc.complete,k=i+1)
+  si <- silhouette(cut.tree.complete,dist(kdata.scale))
+  ssi <- summary(si)
+  
+  # with pam fit, sil info is provided as part of the output
+  # for other clustering methods we would have to extract it with the
+  # silhouette function
+  sil_width2[i] <- ssi$avg.width
+}
+
+# Plot sihouette width (higher is better)
+plot(2:5, sil_width2,
+     main = "Silhouette Width vs. Number of Clusters for Hierarchical Clustering",
+     xlab = "Number of clusters",
+     ylab = "Average Silhouette Width") 
+lines(2:5, sil_width2)
+
+```
+
+
+
+We now plot the Partitioning Around Medoids clustering average silhouette width against the number of clusters in the graph below with k going from 2 to 5. For hierarchical clustering we use complete linkage. 
+
+
+```{r,  fig.height= 4, fig.width=7}
+
+# let's investigate the number of clusters for PAM
+
+y = kdata.scale # We use our scaled data. 
+
+sil_width3 <- c()
+for(i in 1:4){
+  pam_fit <- pam(y, k=i+1)
+  # with pam fit, sil info is provided as part of the output
+  # for other clustering methods we would have to extract it with the
+  # silhouette function
+  sil_width3[i] <- pam_fit$silinfo$avg.width
+}
+
+# Plot sihouette width (higher is better)
+
+plot(2:5, sil_width3,
+     main = "Silhouette Width vs. Number of Clusters for PAM",
+     xlab = "Number of clusters",
+     ylab = "Silhouette Width")
+lines(2:5, sil_width3)
+
+
+```
+
+
+K-Means Clustering
+
+
+**Summary of what we will do for k-means clustering**
+
+**Exploratory k-means clustering**
+
+
+We present the behaviour rdPCA plots below.
+
+```{r}
+
+km2.mouse.out = kmeans(kdata.scale,2,nstart=40)
+plot_PCA_kmeans(km2.mouse.out, labels_behavior)
+```
+
+```{r}
+km3.mouse.out = kmeans(kdata.scale,3,nstart=40)
+plot_PCA_kmeans(km3.mouse.out, labels_behavior)
+
+```
+
+
+```{r}
+
+km4.mouse.out = kmeans(kdata.scale,4,nstart=40)
+plot_PCA_kmeans(km4.mouse.out, labels_behavior)
+
+```
+
+
+
+```{r}
+
+plot_PCA_kmeans(km2.mouse.out, labels_treatment)
+
+```
+
+
+We will take a closer look at k = 2 clusters and k = 3 cluster. 
+
+For now we look more deeply into do k = 2 clusters first. 
+
+Now we will plot the two clusters and the classes against different variables.
+
+```{r}
+
+plot_kmeans_variables(km2.mouse.out, 1, 3, labels_treatment)
+
+```
+
+
+
+```{r}
+data_clus = data.frame(data_unscaled, cluster = km2.mouse.out$cluster)
+boxplot(BDNF_N ~ cluster,data_clus, 
+        main = "Boxplot of BDNF_N Protein for the two Clusters", 
+        xlab = "Cluster",
+        ylab = "BDNR_N")
+
+```
+
+
+
+We will now do the t test. 
+
+```{r}
+t.test(BDNF_N ~ cluster,data_clus)
+```
+
+
+We will now do a t-test for all the 77 proteins comparing their means in the two clusters. 
+
+```{r}
+
+numeric_var_names = colnames(data_unscaled)
+test_data = lapply(data_clus[,numeric_var_names], function(x) t.test(x ~ data_clus$cluster))
+pvalues_data = data.frame(p.value = sapply(test_data, getElement, name = "p.value"))
+estimate_data = t(data.frame(sapply(test_data, getElement, name ="estimate")))
+diff_in_mean = estimate_data[,2] - estimate_data[,1]
+
+final_data = data.frame("Difference in mean of the two clusters" = diff_in_mean, pvalues_data)
+
+protein_w_sig_pvalues = subset(final_data  , p.value < 0.05/77 )
+
+sig_proteins = rownames(protein_w_sig_pvalues)
+
+
+```
+
+
+
+Here below is the table with the mean difference and the p-values. 
+
+```{r}
+kable(protein_w_sig_pvalues, caption = "Proteins with Statisitically Significant
+      mean difference between the two clusters."  )
+```
+
+We will now describe the two clusters in the table below for all the variables of the data. 
+
+```{r}
+
+# Helper Function based on CreateTableOne() function to create tables in 
+# Rmarkdown/Rsweave using kable. 
+KreateTableOne = function(x, ..., printSMD = TRUE){
+  t1 = tableone::CreateTableOne(data=x, ...)
+  t2 = print(t1, quote=TRUE, ...)
+  rownames(t2) = gsub(pattern='\\"', replacement='', rownames(t2))
+  colnames(t2) = gsub(pattern='\\"', replacement='', colnames(t2))
+  return(t2)
+}
+
+```
+
+
+```{r}
+
+table1_data = data.frame(data5[,-1], cluster = km2.mouse.out$cluster)
+vars_names = c(names(categorical_data), names(data_unscaled))
+fvar = names(categorical_data)
+table1 = KreateTableOne(x = table1_data, vars = vars_names, strata= "cluster" )
+
+#table1 = print(table1, showAllLevels)
+
+```
+
+
+```{r }
+
+kable(table1, caption = "Describing the two clusters.")
+
+```
+
+We looked at several more plots and the found the following two very interesting. 
+
+```{r}
+
+plot_kmeans_variables(km2.mouse.out, 1, 3, labels_behavior)
+```
+
+
+
+```{r}
+plot_kmeans_variables(km2.mouse.out, 2, 44, labels_behavior)
+
+```
+
+
+We investigate this a bit further and perform a t-test to verify our finding.
+
+```{r}
+t.test(ITSN1_N ~ Behavior, data5)
+```
+
+We now do a t-test for the protein BDNF_N and compare the mean difference between the behavior groups of C/S and S/C. 
+
+```{r}
+t.test(BDNF_N ~ Behavior, data5)
+```
+
+
+**Now we do k-means clustering for 3 clusters.**
+
+
+
+```{r}
+plot_kmeans_variables(km3.mouse.out, 1, 3, labels_behavior)
+
+```
+
+
+
+```{r}
+t.test(DYRK1A_N ~ Behavior, data5)
+```
+
+We now plot the clustering with the proteins pELK_N and P3525_N.
+
+```{r}
+
+plot_kmeans_variables(km3.mouse.out, 10, 72, labels_behavior)
+
+```
+
+
+
+
+We present the concordance tables of the k = 3 k-means clustering. 
+
+```{r}
+
+## The concordance matrix for k = 3. 
+# Make a cross-tabulation table that shows the concordance.
+table(km3.mouse.out$cluster,labels_genotype); table(km3.mouse.out$cluster,labels_behavior); table(km3.mouse.out$cluster,labels_treatment); table(km3.mouse.out$cluster,labels_class)
+
+```
+
+
+Hierarchical clustering
+
+We will now perform hierarchical clustering.
+
+First, we will do clustering using the three linkages: complete, single, and average, and plot the clustering. 
+   
+
+```{r , fig.height=6,  fig.width=17}
+
+
+####################################################
+####################################################
+##### Hierarchical clustering ############
+
+## Do not need the distances not the data, to run the whole thing. 
+
+## Creates a distance matrix. 
+hc.complete <- hclust(dist(kdata.scale), method="complete")
+hc.average <- hclust(dist(kdata.scale), method="average")
+hc.single <- hclust(dist(kdata.scale), method="single")
+
+par(mfrow=c(1,3))
+
+plot(hc.complete,main="Complete Linkage", xlab="", sub="",
+       cex =.9) ## WHat is cex?
+plot(hc.average , main =" Average Linkage ", xlab="", sub ="",
+       cex =.9)
+plot(hc.single , main=" Single Linkage ", xlab="", sub ="",
+       cex =.9)
+```
+
+
+Further, for k = 2, we will plot the resulting clusters for the proteins BRAF_N and ERBB4_N below. 
+
+```{r Fig4, fig.height=5,  fig.width=15}
+par(mfrow=c(1,3))
+
+cut.tree.com <- cutree(hc.complete,k=2)
+cut.tree.av <- cutree(hc.average,k=2)
+cut.tree.sin <- cutree(hc.single,k=2)
+
+plot(data_scaled[, c(21, 55)],
+     col=cut.tree.com,main="complete")
+
+plot(data_scaled[, c(21, 55)],
+     col=cut.tree.av,main="average")
+
+plot(data_scaled[, c(21, 55)],
+     col=cut.tree.sin,main="single")
+
+```
+
+
+
+Now, we will do a similar visualization of the clustering using the PCA dimension reduction trick. 
+
+```{r}
+
+# How about k=2 ?
+
+cut.tree.com <- cutree(hc.complete,k=2)
+cut.tree.av <- cutree(hc.average,k=2)
+cut.tree.sin <- cutree(hc.single,k=2)
+
+plot_kmeans_variables1(cut.tree.com, 23, 24, labels_behavior)
+```
+
+
+```{r}
+plot_PCA_kmeans1(cut.tree.com, labels_behavior)
+
+```
+
+
+We present the concordance table below, after correcting for this inversion.
+
+```{r}
+
+cut.tree.com = cut.tree.com - 1
+cut.tree.com[ which(cut.tree.com == 0)] = 2
+
+table(cut.tree.com, labels_behavior )
+table(cut.tree.com, labels_treatment)
+table( cut.tree.com, labels_genotype)
+table( cut.tree.com, labels_class)
+```
+
+
+We compare the results of the k=2 hierarchical clustering with the k-means clustering. 
+
+```{r}
+km2.clusters =km2.mouse.out$cluster
+cut.tree.compl <- cut.tree.com
+tree.complete.clusters = cut.tree.compl
+
+d = table(tree.complete.clusters, km2.clusters)
+
+kable(xtable(d), row.names = TRUE,
+      col.names = c("Kmeans Cluster 1", "Kmeans Cluster 2"), 
+      caption = "Comparing clustering of hierarchical clustering (rows) with k-means clustering for k = 2.")
+
+
+```
+
+
+We now do some clustering for k = 3. 
+
+```{r}
+
+# How about k=3?
+
+cut.tree.com <- cutree(hc.complete,k=3)
+
+par(mfrow=c(1,3))
+
+
+plot(data_scaled[, c(4, 5)],
+     col=cut.tree.com,main="complete")
+
+plot(data_scaled[, c(1, 77)],
+     col=cut.tree.com,main="complete")
+
+plot(data_scaled[, c(31, 32)],
+     col=cut.tree.com,main="complete")
+```
+
+
+```{r}
+par(mfrow=c(1,1))
+
+plot_PCA_kmeans1(cut.tree.com, labels_behavior)
+```
+
+```{r}
+
+table(cut.tree.com, labels_behavior )
+table(cut.tree.com, labels_treatment)
+table( cut.tree.com, labels_genotype)
+table( cut.tree.com, labels_class)
+
+```
+
+
+```{r}
+cut.tree.com <- cutree(hc.complete,k=8)
+table( cut.tree.com, labels_class)
+```
+
+
+```{r}
+cut.tree.com <- cutree(hc.complete,k=12)
+table( cut.tree.com, labels_class)
+```
+
+PCA and Biplots.
+
+
+```{r}
+
+pr.out <- prcomp(data_unscaled, scale=TRUE) #We have scaled the data
+pr.var <- pr.out$sdev^2
+pve <- pr.var/sum(pr.var)
+
+plot(pve, xlab="Principal Component", ylab="Proportion of 
+     Variance Explained ", type="b")
+
+# there is a drop after about 9 pc's
+```
+
+
+```{r}
+
+plot(cumsum(pve), xlab="Principal Component", ylab="
+     Cumulative Proportion of Variance Explained ",
+     ylim=c(0,1), type="b")
+# not a drastic change in terms of cummulative variance explained
+
+# summary contains most of this info
+
+```
+
+
+```{r}
+vars <- apply(pr.out$x, 2, var)  
+props <- vars / sum(vars)
+cumsum(props)[1:9]
+```
+
+
+```{r, fig.width=10, fig.height=10}
+biplot(pr.out, scale=0 )
+
+```
+
